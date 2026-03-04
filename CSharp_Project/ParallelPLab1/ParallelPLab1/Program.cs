@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Threading;
 using System.Numerics;
 
@@ -9,109 +8,112 @@ namespace ParallelPLab1
     {
         static void Main(string[] args)
         {
+            Thread.CurrentThread.CurrentCulture = new System.Globalization.CultureInfo("en-US");
             Console.OutputEncoding = System.Text.Encoding.UTF8;
-            Console.Title = "Лабораторна робота №1 - Багатопотоковість";
+            Console.Clear();
 
             while (true)
             {
-                int stepValue;
+                int step;
                 while (true)
                 {
-                    Console.WriteLine("\n=== Новий розрахунок ===");
-                    Console.Write("Вкажіть крок послідовності (ціле число > 0): ");
-                    if (int.TryParse(Console.ReadLine(), out stepValue) && stepValue > 0) break;
-                    Console.WriteLine("Помилка: потрібно ввести додатне ціле число.");
+                    Console.WriteLine("Введіть крок роботи потоків");
+                    if (int.TryParse(Console.ReadLine(), out step) && step > 0)
+                    {
+                        break;
+                    }
+                    Console.WriteLine("Помилка вводу. Будь ласка, введіть ціле додатне число.");
                 }
 
-                int[] timeLimits;
+                int[] times;
                 while (true)
                 {
-                    Console.WriteLine("Вкажіть час роботи для кожного потоку в секундах (через пробіл):");
+                    Console.WriteLine("Введіть час роботи потоків у секундах через пробіл");
                     string input = Console.ReadLine();
 
-                    if (string.IsNullOrWhiteSpace(input)) continue;
-
-                    string[] parts = input.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                    timeLimits = new int[parts.Length];
-                    bool success = true;
-
-                    for (int i = 0; i < parts.Length; i++)
+                    if (string.IsNullOrWhiteSpace(input))
                     {
-                        if (!int.TryParse(parts[i], out timeLimits[i]) || timeLimits[i] <= 0)
+                        continue;
+                    }
+
+                    string[] timesStr = input.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                    times = new int[timesStr.Length];
+                    bool allValid = true;
+
+                    for (int i = 0; i < timesStr.Length; i++)
+                    {
+                        if (!int.TryParse(timesStr[i], out times[i]) || times[i] <= 0)
                         {
-                            success = false;
+                            allValid = false;
                             break;
                         }
                     }
 
-                    if (success) break;
-                    Console.WriteLine("Помилка: всі значення часу мають бути цілими числами більше нуля.");
-                }
-
-                int totalThreads = timeLimits.Length;
-                SequenceCalculator[] calculators = new SequenceCalculator[totalThreads];
-                Thread[] workers = new Thread[totalThreads];
-                Thread[] timers = new Thread[totalThreads];
-
-                for (int i = 0; i < totalThreads; i++)
-                {
-                    int currentLimit = timeLimits[i];
-                    calculators[i] = new SequenceCalculator(i + 1, stepValue, currentLimit);
-
-                    workers[i] = new Thread(calculators[i].ExecuteMath);
-
-                    int index = i;
-                    timers[i] = new Thread(() =>
+                    if (allValid)
                     {
-                        Thread.Sleep(currentLimit * 1000);
-                        calculators[index].TriggerStop();
+                        break;
+                    }
+                    Console.WriteLine("Помилка вводу. Переконайтеся, що ви ввели лише цілі додатні числа через пробіл.");
+                }
+
+                int numThreads = times.Length;
+                int maxTime = 0;
+                for (int i = 0; i < numThreads; i++)
+                {
+                    if (times[i] > maxTime) maxTime = times[i];
+                }
+
+                int[] stopFlags = new int[numThreads];
+                Thread[] threads = new Thread[numThreads];
+
+                for (int i = 0; i < numThreads; i++)
+                {
+                    int localIndex = i;
+                    int timeLimit = times[i];
+                    int threadId = i + 1;
+
+                    threads[i] = new Thread(() => {
+                        BigInteger sum = 0;
+                        BigInteger elementsCount = 0;
+
+                        while (Volatile.Read(ref stopFlags[localIndex]) == 0)
+                        {
+                            sum += step;
+                            elementsCount++;
+                        }
+
+                        Console.WriteLine($"{threadId} - {sum}, {step} - {elementsCount} разів за {timeLimit} сек.");
                     });
+                    threads[i].Start();
                 }
 
-                for (int i = 0; i < totalThreads; i++)
-                {
-                    workers[i].Start();
-                    timers[i].Start();
-                }
+                Thread masterStopper = new Thread(() => {
+                    var events = new (int Time, int Index)[numThreads];
+                    for (int i = 0; i < numThreads; i++)
+                    {
+                        events[i] = (times[i], i);
+                    }
+                    Array.Sort(events, (a, b) => a.Time.CompareTo(b.Time));
 
-                for (int i = 0; i < totalThreads; i++)
-                {
-                    workers[i].Join();
-                }
+                    int elapsed = 0;
+                    for (int i = 0; i < numThreads; i++)
+                    {
+                        int sleepTime = events[i].Time - elapsed;
+                        if (sleepTime > 0)
+                        {
+                            Thread.Sleep(sleepTime * 1000);
+                            elapsed += sleepTime;
+                        }
+                        Volatile.Write(ref stopFlags[events[i].Index], 1);
+                    }
+                });
+                masterStopper.Start();
 
-                Console.WriteLine("\n[OK] Усі потоки завершили обчислення. Очікування наступного вводу...");
+                Thread.Sleep((maxTime + 1) * 1000);
+
+                Console.WriteLine("\nУсі потоки завершили роботу. Починаємо новий цикл.");
+                Console.WriteLine();
             }
-        }
-    }
-
-    class SequenceCalculator
-    {
-        private readonly int _id;
-        private readonly int _step;
-        private readonly int _timeLimit;
-        private volatile bool _isRunning = true;
-
-        public SequenceCalculator(int id, int step, int limit)
-        {
-            _id = id;
-            _step = step;
-            _timeLimit = limit;
-        }
-
-        public void TriggerStop() => _isRunning = false;
-
-        public void ExecuteMath()
-        {
-            BigInteger totalSum = 0;
-            BigInteger iterations = 0;
-
-            while (_isRunning)
-            {
-                totalSum += _step;
-                iterations++;
-            }
-
-            Console.WriteLine($"[Потік №{_id}] Сума: {totalSum} | Крок: {_step} | Кількість доданків: {iterations} | Час: {_timeLimit} сек.");
         }
     }
 }

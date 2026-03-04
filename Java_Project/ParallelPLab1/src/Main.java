@@ -1,105 +1,135 @@
 import java.math.BigInteger;
 import java.util.Scanner;
-import java.util.ArrayList;
-import java.util.List;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class Main {
     public static void main(String[] args) {
-        Scanner sc = new Scanner(System.in);
+        System.setOut(new PrintStream(System.out, true, StandardCharsets.UTF_8));
+        Scanner scanner = new Scanner(System.in, StandardCharsets.UTF_8);
 
         while (true) {
-            int stepVal;
+            int step = 0;
             while (true) {
-                System.out.println("\n=== Новий розрахунок Java ===");
-                System.out.println("Введіть крок роботи потоків (0 для виходу):");
-                if (sc.hasNextInt()) {
-                    stepVal = sc.nextInt();
-                    if (stepVal == 0) {
-                        System.out.println("Завершення програми.");
+                System.out.println("Введіть крок роботи потоків (0 для виходу)");
+                String stepInput = scanner.nextLine();
+                try {
+                    step = Integer.parseInt(stepInput.trim());
+                    if (step == 0) {
+                        System.out.println("Програма завершує роботу.");
                         return;
                     }
-                    if (stepVal > 0) {
-                        sc.nextLine();
+                    if (step > 0) {
                         break;
                     }
-                } else {
-                    sc.next();
-                }
-                System.out.println("Помилка: введіть ціле число більше 0.");
-            }
-
-            System.out.println("Введіть час роботи потоків у секундах через пробіл:");
-            String line = sc.nextLine();
-            if (line.trim().isEmpty()) continue;
-
-            String[] timeParts = line.trim().split("\\s+");
-            List<SequenceWorker> workers = new ArrayList<>();
-            List<Thread> stoppers = new ArrayList<>();
-
-            for (int i = 0; i < timeParts.length; i++) {
-                try {
-                    int seconds = Integer.parseInt(timeParts[i]);
-                    SequenceWorker worker = new SequenceWorker(i + 1, stepVal, seconds);
-                    workers.add(worker);
-
-                    Thread stopper = new Thread(() -> {
-                        try {
-                            Thread.sleep(seconds * 1000L);
-                        } catch (InterruptedException ignored) {}
-                        worker.requestStop();
-                    });
-                    stoppers.add(stopper);
-
                 } catch (NumberFormatException e) {
-                    System.out.println("Помилка парсингу часу: " + timeParts[i]);
+
+                }
+                System.out.println("Помилка вводу. Будь ласка, введіть ціле додатне число або 0 для виходу.");
+            }
+
+            int[] times;
+            while (true) {
+                System.out.println("Введіть час роботи потоків у секундах через пробіл");
+                String input = scanner.nextLine();
+
+                if (input == null || input.trim().isEmpty()) {
+                    continue;
+                }
+
+                String[] timesStr = input.trim().split("\\s+");
+                times = new int[timesStr.length];
+                boolean allValid = true;
+
+                for (int i = 0; i < timesStr.length; i++) {
+                    try {
+                        times[i] = Integer.parseInt(timesStr[i]);
+                        if (times[i] <= 0) {
+                            allValid = false;
+                            break;
+                        }
+                    } catch (NumberFormatException e) {
+                        allValid = false;
+                        break;
+                    }
+                }
+
+                if (allValid) {
+                    break;
+                }
+                System.out.println("Помилка вводу. Переконайтеся, що ви ввели лише цілі додатні числа через пробіл.");
+            }
+
+            int numThreads = times.length;
+            int maxTime = 0;
+            for (int t : times) {
+                if (t > maxTime) {
+                    maxTime = t;
                 }
             }
 
-            for (int i = 0; i < workers.size(); i++) {
-                workers.get(i).start();
-                stoppers.get(i).start();
+            AtomicBoolean[] stopFlags = new AtomicBoolean[numThreads];
+            Thread[] threads = new Thread[numThreads];
+
+            for (int i = 0; i < numThreads; i++) {
+                stopFlags[i] = new AtomicBoolean(false);
+                final int localIndex = i;
+                final int timeLimit = times[i];
+                final int threadId = i + 1;
+                final int currentStep = step;
+
+                threads[i] = new Thread(() -> {
+                    BigInteger sum = BigInteger.ZERO;
+                    BigInteger elementsCount = BigInteger.ZERO;
+                    BigInteger stepBig = BigInteger.valueOf(currentStep);
+
+                    while (!stopFlags[localIndex].get()) {
+                        sum = sum.add(stepBig);
+                        elementsCount = elementsCount.add(BigInteger.ONE);
+                    }
+
+                    System.out.println(threadId + " - " + sum + ", " + currentStep + " - " + elementsCount + " разів за " + timeLimit + " сек.");
+                });
+                threads[i].start();
             }
 
-            for (SequenceWorker w : workers) {
-                try {
-                    w.join();
-                } catch (InterruptedException ignored) {}
+            final int[] finalTimes = times;
+            Thread masterStopper = new Thread(() -> {
+                int[][] events = new int[numThreads][2];
+                for (int i = 0; i < numThreads; i++) {
+                    events[i][0] = finalTimes[i];
+                    events[i][1] = i;
+                }
+                Arrays.sort(events, Comparator.comparingInt(a -> a[0]));
+
+
+                int elapsed = 0;
+                for (int i = 0; i < numThreads; i++) {
+                    int sleepTime = events[i][0] - elapsed;
+                    if (sleepTime > 0) {
+                        try {
+                            Thread.sleep(sleepTime * 1000L);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                        elapsed += sleepTime;
+                    }
+                    stopFlags[events[i][1]].set(true);
+                }
+            });
+            masterStopper.start();
+
+            try {
+                Thread.sleep((maxTime + 1) * 1000L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             }
 
             System.out.println("Усі потоки завершили роботу. Починаємо новий цикл.");
+            System.out.println();
         }
-    }
-}
-
-class SequenceWorker extends Thread {
-    private final int id;
-    private final int step;
-    private final int timeLimit;
-    private volatile boolean canWork = true;
-
-    public SequenceWorker(int id, int step, int timeLimit) {
-        this.id = id;
-        this.step = step;
-        this.timeLimit = timeLimit;
-    }
-
-    public void requestStop() {
-        this.canWork = false;
-    }
-
-    @Override
-    public void run() {
-        BigInteger totalSum = BigInteger.ZERO;
-        BigInteger count = BigInteger.ZERO;
-
-        BigInteger bigStep = BigInteger.valueOf(step);
-
-        while (canWork) {
-            totalSum = totalSum.add(bigStep);
-            count = count.add(BigInteger.ONE);
-        }
-
-        System.out.printf("[Потік №%d] Сума: %s | Крок: %d | Доданків: %s | Час: %d сек.%n",
-                id, totalSum.toString(), step, count.toString(), timeLimit);
     }
 }
